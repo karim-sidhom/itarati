@@ -621,6 +621,9 @@
     </div>
     <div class="atm-list" id="atm-list"></div>
 
+    <!-- لوحة تشخيص ظاهرة على الشاشة (بلا حاجة لأدوات المطوّر) -->
+    <div id="debug-panel" style="margin-top:14px;padding:10px;border:1px dashed rgba(212,160,23,0.5);border-radius:8px;font-size:11px;line-height:1.6;direction:ltr;text-align:left;background:rgba(0,0,0,0.25);color:#e8dcc0;white-space:pre-wrap;word-break:break-word;"></div>
+
     <!-- ذيل الصفحة -->
     <div class="footer">
         <span class="footer-arabic">إطاراتي</span>
@@ -676,6 +679,11 @@ const BRAND_SEARCH_TERMS = CAR_BRANDS.flatMap(b=>{
     if(BRAND_DISTRIBUTOR[b]) terms.push({term:BRAND_DISTRIBUTOR[b], brand:b});
     return terms;
 });
+
+// مصطلحات عامة (بلا علامة) بالعربي/الدارجة التونسية والفرنسية والإنڨليزية،
+// باش نلقاو أي بائع إطارات حتى إذا ما كانش مسجّل بعلامة معروفة في OSM
+const GENERIC_TYRE_TERMS = ["إطارات","أجال","غوما","pneus","gomme"];
+GENERIC_TYRE_TERMS.forEach(t=>BRAND_SEARCH_TERMS.push({term:t, brand:null}));
 
 function buildFilterBar(){
     const bar = document.getElementById("filter-bar");
@@ -790,13 +798,21 @@ function renderEmergencyNumbers(cc) {
 
 // ══ CORE ══
 const GPS_ACC=150, GPS_FALLBACK_ACC=2500, GPS_AGE=30000, GPS_DIST=0.05, GPS_INITIAL_FALLBACK_MS=8000, GPS_OPT={enableHighAccuracy:true,timeout:20000,maximumAge:0};
-const RADII=[1,2,5,10];
+const RADII=[20,40,60,80,100,120,140,160,180,200];
 
 function haversineKm(a,b,c,e){const R=6371,dL=d2r(c-a),dO=d2r(e-b),x=Math.sin(dL/2)**2+Math.cos(d2r(a))*Math.cos(d2r(c))*Math.sin(dO/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
 
 function showNotif(text,imp){Toastify({text,duration:4000,gravity:'bottom',position:'right',stopOnFocus:false,style:{background:imp?'rgba(212,160,23,0.92)':'rgba(6,13,58,0.95)',color:imp?'#060d3a':'#b8a878',border:imp?'1px solid #f5c842':'1px solid rgba(212,160,23,0.3)',borderRadius:'10px',fontFamily:"'Tajawal',sans-serif",fontSize:'13px',fontWeight:'700',padding:'10px 16px',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}).showToast();}
 
 function atmState(msg){const l=document.getElementById('atm-list');l.innerHTML='';const d=document.createElement('div');d.className='p-state';d.textContent=msg;l.appendChild(d);}
+
+function debugLog(msg){
+    const p=document.getElementById('debug-panel');
+    if(!p) return;
+    const t=new Date().toLocaleTimeString('en-GB',{hour12:false});
+    p.textContent += `[${t}] ${msg}\n`;
+    p.scrollTop = p.scrollHeight;
+}
 
 function updateStats(items, radiusKm){
     document.getElementById('stat-total').textContent = items.length || '0';
@@ -865,9 +881,9 @@ async function fetchByBrandNames(lat,lon,r,ctrl,onPlace){
     // NOTE: requests are staggered by 3s each (not fired all at once) to avoid Nominatim's rate-limiting/blocking of bulk parallel requests.
     // onPlace(place) fires as soon as each staggered request resolves, so results can be shown live instead of waiting for all 27 to finish.
     const vb = viewbox(lat,lon,r);
-    const NOMINATIM_STAGGER_MS = 3000;
+    const NOMINATIM_STAGGER_MS = 1000;
     const results = await Promise.all(BRAND_SEARCH_TERMS.map(({term,brand},i)=>{
-        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(term)}&viewbox=${vb}&bounded=1&limit=5&accept-language=ar`;
+        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(term)}&viewbox=${vb}&bounded=1&limit=10&accept-language=ar`;
         return new Promise(resolve=>{
             const t=setTimeout(()=>{
                 if(ctrl.signal.aborted){resolve({arr:[],brand});return;}
@@ -893,32 +909,31 @@ async function fetchByBrandNames(lat,lon,r,ctrl,onPlace){
 }
 
 async function fetchATM(lat,lon,r,ctrl,onOverpass,onPlace){
-    // Search for ANY tire vendor (any brand, or no brand at all) using Overpass API —
-    // not limited to official brand concessionaires. We combine several tag/name
-    // signals used in the field for tire shops: shop=tyres, car_repair shops that
-    // service tyres, and any shop whose name mentions "إطارات/اطارات/pneu/gomme/tyre".
+    // بحث عن أي بائع إطارات (بأي علامة أو بلا علامة) عبر Overpass API
     const radiusM = Math.round(r*1000);
-    const NAME_RX = 'إطار|اطار|بيع.?الإطارات|تبديل.?الإطارات|غوما|قوما|pneu|pneus|gomme|gommes|tyre|tyres|tire|tires';
+    const NAME_RX = 'إطار|اطار|بيع.?الإطارات|تبديل.?الإطارات|غوما|قوما|أجال|اجال|جال|pneu|pneus|gomme|gommes|tyre|tyres|tire|tires';
     const q = `[out:json][timeout:25];(
         node["shop"="tyres"](around:${radiusM},${lat},${lon});
         way["shop"="tyres"](around:${radiusM},${lat},${lon});
         relation["shop"="tyres"](around:${radiusM},${lat},${lon});
-        node["shop"="car_repair"]["service:vehicle:tyres"="yes"](around:${radiusM},${lat},${lon});
-        way["shop"="car_repair"]["service:vehicle:tyres"="yes"](around:${radiusM},${lat},${lon});
-        node["shop"~"^(car_repair|car|car_parts)$"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
-        way["shop"~"^(car_repair|car|car_parts)$"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
-        node["name"~"${NAME_RX}",i]["shop"](around:${radiusM},${lat},${lon});
-        way["name"~"${NAME_RX}",i]["shop"](around:${radiusM},${lat},${lon});
+        node["shop"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
+        way["shop"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
+        node["amenity"="car_repair"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
+        way["amenity"="car_repair"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
     );out center;`;
+
+    debugLog(`Overpass: إرسال طلب (نطاق ${radiusM}م)...`);
     let overpassPlaces = [];
     try{
-        const res=await fetch('https://overpass-api.de/api/interpreter',{
+        const res = await fetch('https://overpass-api.de/api/interpreter', {
             method:'POST', signal:ctrl.signal,
             headers:{'Content-Type':'text/plain'},
             body:q
         });
+        debugLog(`Overpass: HTTP ${res.status}`);
         if(res.ok){
             const data = await res.json();
+            debugLog(`Overpass: عناصر خام = ${(data.elements||[]).length}${data.remark?(' | remark: '+data.remark):''}`);
             overpassPlaces = (data.elements||[]).map(el=>{
                 const elLat = el.lat!==undefined ? el.lat : (el.center && el.center.lat);
                 const elLon = el.lon!==undefined ? el.lon : (el.center && el.center.lon);
@@ -926,12 +941,20 @@ async function fetchATM(lat,lon,r,ctrl,onOverpass,onPlace){
                 const name = tags['name:ar'] || tags.name || tags.brand || 'محل إطارات';
                 return { lat: elLat, lon: elLon, name };
             }).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon));
+        } else {
+            debugLog(`Overpass: حالة غير سليمة ${res.status}`);
         }
-    }catch(e){ console.warn('Overpass failed, relying on brand-name search', e); }
+    }catch(e){
+        debugLog(`Overpass: خطأ — ${(e&&e.name)||''} ${(e&&e.message)||e}`);
+    }
     if(onOverpass) onOverpass(overpassPlaces);
+
+    debugLog(`Nominatim: بدء البحث بالأسماء (${BRAND_SEARCH_TERMS.length} كلمة)...`);
     let brandPlaces = [];
-    try{ brandPlaces = await fetchByBrandNames(lat,lon,r,ctrl,onPlace); }catch(e){ console.warn('Brand-name search failed', e); }
-    console.log(`[إطاراتي debug] Overpass: ${overpassPlaces.length} | بحث بالاسم: ${brandPlaces.length}`);
+    try{ brandPlaces = await fetchByBrandNames(lat,lon,r,ctrl,onPlace); }
+    catch(e){ debugLog(`Nominatim: خطأ — ${(e&&e.name)||''} ${(e&&e.message)||e}`); }
+
+    debugLog(`النتيجة النهائية لهذا النطاق: Overpass=${overpassPlaces.length} | Nominatim=${brandPlaces.length}`);
     return {places: [...overpassPlaces, ...brandPlaces]};
 }
 
@@ -947,12 +970,21 @@ async function findNearbyATMs(lat,lon){
     const norm=places=>places.map(p=>{const mL=parseFloat(p.lat),mO=parseFloat(p.lon);const n=p.name||'محل إطارات';return{name:n,lat:mL,lon:mO,brandHint:p.brandHint||null,dist:haversineKm(lat,lon,mL,mO)};}).sort((a,b)=>a.dist-b.dist);
     // deduplicate by coords
     function dedup(arr){ const seen=new Set(); return arr.filter(m=>{ const k=m.lat.toFixed(4)+','+m.lon.toFixed(4); if(seen.has(k)) return false; seen.add(k); return true; }); }
+    // رقم تسلسلي خاص بكل محاولة نطاق (radius attempt)، ومتحكم إلغاء مشترك.
+    // بدون هذا، لما تبدا محاولة نطاق جديدة (تلقائياً أو بالضغط على "توسيع نطاق البحث")،
+    // كانت المحاولة القديمة (بطلبات Nominatim البطيئة) تبقى خدّامة في الخلفية وتزيد
+    // تعرض نتائج قديمة فوق النتائج الجديدة، فيبان كأن التطبيق "يخلط" كل البحوث مع بعضها.
+    let radiusToken = 0;
+    let activeCtrl = null;
     async function tryR(rIdx,req=true){
         const r=RADII[rIdx]; if(!r)return false;
+        if(activeCtrl) activeCtrl.abort(); // ألغِ أي محاولة نطاق سابقة لسّا خدّامة
+        const myToken = ++radiusToken;
         atmState(`🚗 البحث في نطاق ${r<1?r*1000+' م':r+' كم'}...`);
+        debugLog(`— بدء محاولة نطاق ${r} كم —`);
         let rawAccum=[];
         function liveUpdate(newRaw){
-            if(seq!==atmSearchSeq) return;
+            if(seq!==atmSearchSeq || myToken!==radiusToken) return;
             rawAccum = rawAccum.concat(newRaw);
             const liveItems=dedup(norm(rawAccum).filter(m=>m.dist<=r));
             if(liveItems.length) renderATMs(liveItems,r,5,label,null);
@@ -960,14 +992,16 @@ async function findNearbyATMs(lat,lon){
         let pay,t=null;
         try{
             const ctrl=new AbortController();
+            activeCtrl = ctrl;
             t=setTimeout(()=>ctrl.abort(),60000);
             pay=await fetchATM(lat,lon,r,ctrl, overpassPlaces=>liveUpdate(overpassPlaces), place=>liveUpdate([place]));
         }
-        catch(e){if(seq!==atmSearchSeq)return true;atmState('⚠️ تعذّر الاتصال بالخوادم. حاول مجدداً.');return true;}
+        catch(e){if(seq!==atmSearchSeq||myToken!==radiusToken)return true;atmState('⚠️ تعذّر الاتصال بالخوادم. حاول مجدداً.');return true;}
         finally{if(t)clearTimeout(t);}
-        if(seq!==atmSearchSeq)return true;
+        if(seq!==atmSearchSeq||myToken!==radiusToken)return true;
         const items=dedup(norm(pay.places||[]).filter(m=>m.dist<=r));
         console.log(`[إطاراتي debug] نطاق ${r} كم — عناصر خام من Overpass: ${(pay.places||[]).length}, بعد الفلترة: ${items.length}`, pay.places);
+        debugLog(`نطاق ${r} كم: عناصر خام=${(pay.places||[]).length} | بعد فلترة المسافة=${items.length}`);
         if(!items.length){if(req)return false;atmState(`لم يتم العثور على محلات إطارات في نطاق ${r} كم.`);return true;}
         const hasNext=rIdx<RADII.length-1;
         renderATMs(items,r,5,label,hasNext?()=>tryR(rIdx+1,false):null);
@@ -981,6 +1015,7 @@ function initApp(lat,lng){
     const seq=++appLocationSeq; currentLat=lat; currentLng=lng;
     const isManual=document.getElementById('pos-mode-select').value==='manual';
     document.getElementById('gps-txt').textContent=isManual?`الموقع اليدوي: ${lat.toFixed(5)}، ${lng.toFixed(5)}`:`GPS نشط: ${lat.toFixed(5)}، ${lng.toFixed(5)}`;
+    debugLog(`موقع محدّد: lat=${lat.toFixed(5)} lon=${lng.toFixed(5)} (${isManual?'يدوي':'GPS'})`);
     document.getElementById('global-maps-link').href=`https://www.google.com/maps/search/tire+shop/@${lat},${lng},15z`;
     reverseGeocode(lat,lng).then(geo=>{
         if(seq!==appLocationSeq)return;
