@@ -649,55 +649,23 @@ function setFilter(brand, btn){
 
 let _lastRadius = 1, _lastLabel = '';
 
-// ══ CAR BRANDS (عالمية) ══
-const CAR_BRANDS = ["MICHELIN","BRIDGESTONE","CONTINENTAL","PIRELLI","GOODYEAR","DUNLOP","HANKOOK","YOKOHAMA","KUMHO","TOYO","FALKEN","UNIROYAL","MAXXIS","NEXEN","SAILUN"];
-
-// ══ الموزّع الرسمي في تونس لكل علامة ══
-// ✅ مؤكّدة (شركات مدرجة في بورصة تونس): STAFIM (بيجو)، Ennakl Automobiles (فولكسفاغن/أودي/سكودا/سيات)، City Cars (شيري/DFSK)
-// ⚠️ فارغة = غير مؤكّدة، زيدها بنفسك إذا تعرفها بالضبط
-const BRAND_DISTRIBUTOR = {
-    MICHELIN: "",    // TODO: زيد اسم الموزّع الرسمي في تونس
-    BRIDGESTONE: "", // TODO
-    CONTINENTAL: "", // TODO
-    PIRELLI: "",     // TODO
-    GOODYEAR: "",    // TODO
-    DUNLOP: "",      // TODO
-    HANKOOK: "",     // TODO
-    YOKOHAMA: "",    // TODO
-    KUMHO: "",       // TODO
-    TOYO: "",        // TODO
-    FALKEN: "",      // TODO
-    UNIROYAL: "",    // TODO
-    MAXXIS: "",      // TODO
-    NEXEN: "",       // TODO
-    SAILUN: "",      // TODO
-};
-
-// قائمة كل مصطلحات البحث (اسم العلامة + اسم الموزّع إذا معروف) مع ربطها بالعلامة الأصلية
-const BRAND_SEARCH_TERMS = CAR_BRANDS.flatMap(b=>{
-    const terms = [{term:b, brand:b}];
-    if(BRAND_DISTRIBUTOR[b]) terms.push({term:BRAND_DISTRIBUTOR[b], brand:b});
-    return terms;
-});
-
-// مصطلحات عامة (بلا علامة) بالعربي/الدارجة التونسية والفرنسية والإنڨليزية،
-// باش نلقاو أي بائع إطارات حتى إذا ما كانش مسجّل بعلامة معروفة في OSM
-const GENERIC_TYRE_TERMS = ["إطارات","أجال","غوما","pneus","gomme"];
+// ══ بحث عام عن أي بائع أو مصلّح إطارات — بلا أي علامة تجارية ══
+// (ماشي بحث بالعلامة كي Michelin/Bridgestone، هذا بائع أو مصلّح إطارات بصفة عامة مهما كانت العلامة)
+const BRAND_SEARCH_TERMS = [];
+const GENERIC_TYRE_TERMS = [
+    "إطارات","بيع الإطارات","تبديل الإطارات","تصليح إطارات","مصلح إطارات",
+    "أجال","غوما","قوما",
+    "pneus","gomme","réparation pneus","garage pneus","vulcanisateur","pneumatique"
+];
 GENERIC_TYRE_TERMS.forEach(t=>BRAND_SEARCH_TERMS.push({term:t, brand:null}));
 
 function buildFilterBar(){
+    // ما فماش فلترة بالعلامة — البحث عام لأي بائع/مصلّح إطارات
     const bar = document.getElementById("filter-bar");
-    bar.innerHTML = "<button class=\"filter-btn active\" data-filter=\"all\" onclick=\"setFilter('all',this)\">🚗 الكل</button>";
-    CAR_BRANDS.forEach(b=>{
-        const btn = document.createElement("button");
-        btn.className = "filter-btn";
-        btn.dataset.filter = b;
-        btn.textContent = b;
-        btn.onclick = function(){ setFilter(b, this); };
-        bar.appendChild(btn);
-    });
+    bar.innerHTML = "";
     _currentFilter = "all";
 }
+
 
 function getFilteredItems(){
     if(_currentFilter === 'all') return _allAtmItems;
@@ -798,7 +766,7 @@ function renderEmergencyNumbers(cc) {
 
 // ══ CORE ══
 const GPS_ACC=150, GPS_FALLBACK_ACC=2500, GPS_AGE=30000, GPS_DIST=0.05, GPS_INITIAL_FALLBACK_MS=8000, GPS_OPT={enableHighAccuracy:true,timeout:20000,maximumAge:0};
-const RADII=[20,40,60,80,100,120,140,160,180,200];
+const RADII=[50,100,200,400];
 
 function haversineKm(a,b,c,e){const R=6371,dL=d2r(c-a),dO=d2r(e-b),x=Math.sin(dL/2)**2+Math.cos(d2r(a))*Math.cos(d2r(c))*Math.sin(dO/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
 
@@ -814,6 +782,35 @@ function debugLog(msg){
     p.scrollTop = p.scrollHeight;
 }
 
+async function connectivitySelfTest(){
+    debugLog('════ اختبار الاتصال بالشبكة ════');
+    // 1) خادم عام معروف بالموثوقية (باش نشوف واش المشكلة عامة وإلا خاصة بـ Overpass)
+    try{
+        const t0=Date.now();
+        const r=await fetch('https://api.github.com/zen',{cache:'no-store'});
+        debugLog(`اختبار 1 (github.com): HTTP ${r.status} — ${Date.now()-t0} مللي ثانية ✓`);
+    }catch(e){
+        debugLog(`اختبار 1 (github.com): فشل — ${(e&&e.name)||''} ${(e&&e.message)||e} ✗`);
+    }
+    // 2) Overpass (GET بسيط، بلا POST)
+    try{
+        const t0=Date.now();
+        const r=await fetch('https://overpass-api.de/api/status',{cache:'no-store'});
+        debugLog(`اختبار 2 (overpass-api.de): HTTP ${r.status} — ${Date.now()-t0} مللي ثانية ✓`);
+    }catch(e){
+        debugLog(`اختبار 2 (overpass-api.de): فشل — ${(e&&e.name)||''} ${(e&&e.message)||e} ✗`);
+    }
+    // 3) Nominatim
+    try{
+        const t0=Date.now();
+        const r=await fetch('https://nominatim.openstreetmap.org/status?format=json',{cache:'no-store'});
+        debugLog(`اختبار 3 (nominatim): HTTP ${r.status} — ${Date.now()-t0} مللي ثانية ✓`);
+    }catch(e){
+        debugLog(`اختبار 3 (nominatim): فشل — ${(e&&e.name)||''} ${(e&&e.message)||e} ✗`);
+    }
+    debugLog('════ نهاية اختبار الاتصال ════');
+}
+
 function updateStats(items, radiusKm){
     document.getElementById('stat-total').textContent = items.length || '0';
     if(items.length > 0){
@@ -826,9 +823,7 @@ function updateStats(items, radiusKm){
 }
 
 function getBrandName(name){
-    const n = (name||'').toUpperCase();
-    for(const b of CAR_BRANDS){ if(n.includes(b)) return b.charAt(0)+b.slice(1).toLowerCase(); }
-    return '';
+    return ''; // ما فماش بحث بالعلامة التجارية توّا — بائع/مصلّح إطارات بصفة عامة
 }
 
 function renderATMs(items, radiusKm, shown=5, placeLabel='', onExpand=null, rerender=false){
@@ -901,7 +896,7 @@ async function fetchByBrandNames(lat,lon,r,ctrl,onPlace){
             const pl = parseFloat(p.lat), po = parseFloat(p.lon);
             if(Number.isFinite(pl)&&Number.isFinite(po)){
                 const nm = p.name || (p.display_name && p.display_name.split(',')[0].trim()) || 'محل إطارات';
-            out.push({ lat: pl, lon: po, name: nm, brandHint: brand });
+            places.push({ lat: pl, lon: po, name: nm, brandHint: brand });
             }
         });
     });
@@ -909,52 +904,52 @@ async function fetchByBrandNames(lat,lon,r,ctrl,onPlace){
 }
 
 async function fetchATM(lat,lon,r,ctrl,onOverpass,onPlace){
-    // بحث عن أي بائع إطارات (بأي علامة أو بلا علامة) عبر Overpass API
+    // بحث عن محلات الإطارات (shop=tyres) عبر Overpass API — بنفس طريقة تطبيق "وكيلي"،
+    // مع إضافة وحيدة: إذا رفض overpass-api.de الطلب (كيما صار معانا اليوم)، نجرب مرآة بديلة وحدة فقط.
     const radiusM = Math.round(r*1000);
-    const NAME_RX = 'إطار|اطار|بيع.?الإطارات|تبديل.?الإطارات|غوما|قوما|أجال|اجال|جال|pneu|pneus|gomme|gommes|tyre|tyres|tire|tires';
-    const q = `[out:json][timeout:25];(
-        node["shop"="tyres"](around:${radiusM},${lat},${lon});
-        way["shop"="tyres"](around:${radiusM},${lat},${lon});
-        relation["shop"="tyres"](around:${radiusM},${lat},${lon});
-        node["shop"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
-        way["shop"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
-        node["amenity"="car_repair"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
-        way["amenity"="car_repair"]["name"~"${NAME_RX}",i](around:${radiusM},${lat},${lon});
-    );out center;`;
+    const q = `[out:json][timeout:20];(node["shop"="tyres"](around:${radiusM},${lat},${lon});way["shop"="tyres"](around:${radiusM},${lat},${lon});relation["shop"="tyres"](around:${radiusM},${lat},${lon}););out center;`;
 
-    debugLog(`Overpass: إرسال طلب (نطاق ${radiusM}م)...`);
-    let overpassPlaces = [];
-    try{
-        const res = await fetch('https://overpass-api.de/api/interpreter', {
+    async function tryEndpoint(url){
+        const res=await fetch(url,{
             method:'POST', signal:ctrl.signal,
             headers:{'Content-Type':'text/plain'},
             body:q
         });
-        debugLog(`Overpass: HTTP ${res.status}`);
-        if(res.ok){
-            const data = await res.json();
-            debugLog(`Overpass: عناصر خام = ${(data.elements||[]).length}${data.remark?(' | remark: '+data.remark):''}`);
-            overpassPlaces = (data.elements||[]).map(el=>{
-                const elLat = el.lat!==undefined ? el.lat : (el.center && el.center.lat);
-                const elLon = el.lon!==undefined ? el.lon : (el.center && el.center.lon);
-                const tags = el.tags||{};
-                const name = tags['name:ar'] || tags.name || tags.brand || 'محل إطارات';
-                return { lat: elLat, lon: elLon, name };
-            }).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon));
-        } else {
-            debugLog(`Overpass: حالة غير سليمة ${res.status}`);
-        }
+        debugLog(`Overpass (${url}): HTTP ${res.status}`);
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        debugLog(`Overpass (${url}): عناصر خام = ${(data.elements||[]).length}`);
+        return (data.elements||[]).map(el=>{
+            const elLat = el.lat!==undefined ? el.lat : (el.center && el.center.lat);
+            const elLon = el.lon!==undefined ? el.lon : (el.center && el.center.lon);
+            const tags = el.tags||{};
+            const name = tags['name:ar'] || tags.name || tags.brand || 'محل إطارات';
+            return { lat: elLat, lon: elLon, name };
+        }).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon));
+    }
+
+    debugLog(`Overpass: إرسال طلب (نطاق ${radiusM}م)...`);
+    let overpassPlaces = [];
+    try{
+        overpassPlaces = await tryEndpoint('https://overpass-api.de/api/interpreter');
     }catch(e){
-        debugLog(`Overpass: خطأ — ${(e&&e.name)||''} ${(e&&e.message)||e}`);
+        debugLog(`Overpass: فشل الخادم الأساسي (${(e&&e.name)||''} ${(e&&e.message)||e})، نجرب مرآة بديلة...`);
+        try{
+            overpassPlaces = await tryEndpoint('https://overpass.kumi.systems/api/interpreter');
+        }catch(e2){
+            debugLog(`Overpass: فشلت المرآة البديلة أيضاً (${(e2&&e2.name)||''} ${(e2&&e2.message)||e2})`);
+            console.warn('Overpass failed on both endpoints, relying on brand-name search', e2);
+        }
     }
     if(onOverpass) onOverpass(overpassPlaces);
 
     debugLog(`Nominatim: بدء البحث بالأسماء (${BRAND_SEARCH_TERMS.length} كلمة)...`);
     let brandPlaces = [];
     try{ brandPlaces = await fetchByBrandNames(lat,lon,r,ctrl,onPlace); }
-    catch(e){ debugLog(`Nominatim: خطأ — ${(e&&e.name)||''} ${(e&&e.message)||e}`); }
+    catch(e){ debugLog(`Nominatim: خطأ — ${(e&&e.name)||''} ${(e&&e.message)||e}`); console.warn('Brand-name search failed', e); }
 
     debugLog(`النتيجة النهائية لهذا النطاق: Overpass=${overpassPlaces.length} | Nominatim=${brandPlaces.length}`);
+    console.log(`[إطاراتي debug] Overpass: ${overpassPlaces.length} | بحث بالاسم: ${brandPlaces.length}`);
     return {places: [...overpassPlaces, ...brandPlaces]};
 }
 
@@ -1160,6 +1155,7 @@ window.onload=function(){
     sel.value = 'auto';
     panel.style.display = 'none';
     buildFilterBar();
+    connectivitySelfTest();
     startGPS();
     initPrayerTimes();
 };
